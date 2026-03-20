@@ -36,9 +36,9 @@ const CONFIG = {
     distCamadas    : 0.2,         // 0,2% de distância entre níveis
 
     // ─── RISCO ────────────────────────────────────────────
-    maxExposicaoUSDT : 10.41,     // Exposição máxima em USDT (~3 x 3.70)
-    stopDiarioUSDT   : 0.95,      // Stop loss diário (~R$5 ÷ 5.40)
-    stopPorPosicao   : 1.5,       // Stop loss por posição em %
+    maxExposicaoUSDT : 10.41,     
+    stopDiarioUSDT   : 0.95,      
+    stopPorPosicao   : 1.5,       
 
     // ─── RECALIBRAÇÃO ────────────────────────────────────
     // Recalibra a referência quando o mercado se afastar
