@@ -23,7 +23,7 @@ const CONFIG = {
     telegramToken  : process.env.TELEGRAM_TOKEN,
     chatId         : process.env.CHAT_ID,
 
-    MODO_SIMULADO  : true,        // Mude para false quando quiser operar de verdade
+    MODO_SIMULADO  : process.env.MODO_SIMULADO === 'true',       // Mude para false quando quiser operar de verdade
     mexcApiKey     : process.env.MEXC_API_KEY,
     mexcApiSecret  : process.env.MEXC_API_SECRET,
 
