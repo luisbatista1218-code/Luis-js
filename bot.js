@@ -1,12 +1,5 @@
 'use strict';
 
-// ============================================================
-// BOT GRID MEXC — XRP 0,8% COM ~$11 USDT TOTAL (~3 x $3.70)
-// ============================================================
-// Capital total: ~$11 USDT (3 níveis de ~$3.70 USDT ≈ R$20 cada)
-// Grid SIMÉTRICO de 0,8% para XRP na MEXC
-// Toda lógica interna em USDT — BRL só para exibição
-// ============================================================
 
 const TelegramBot = require('node-telegram-bot-api');
 const ccxt        = require('ccxt');
@@ -33,7 +26,7 @@ const CONFIG = {
     // ─── CAPITAL EM USDT ───────────────────────────────────
     // 10.41 usdt pra 3 ≈ $3.47 USDT por nível
     // Ajuste valorCamadaUSDT conforme o câmbio do dia
-    valorCamadaUSDT : 3.47,       // USDT por nível (≈ R$20)
+    valorCamadaUSDT : 3.47,       
     cambioExibicao  : process.env.CAMBIO_EXIBICAO,       // Só para exibição em BRL — não afeta lógica
 
     // ─── GRID 0,8% SIMÉTRICO ──────────────────────────────
