@@ -7,8 +7,15 @@ const low         = require('lowdb');
 const FileSync    = require('lowdb/adapters/FileSync');
 const Decimal     = require('decimal.js');
 const fs          = require('fs');
+const path        = require('path');  // ← ADICIONADO
 
 require('dotenv').config();
+
+// ──────────────────────────────────────────────────────────
+// CAMINHO DINÂMICO PARA RENDER (ADICIONADO)
+// ──────────────────────────────────────────────────────────
+const dataDir = process.env.RENDER ? '/app/data' : '.';
+
 // ──────────────────────────────────────────────────────────
 // CONFIGURAÇÕES
 // ──────────────────────────────────────────────────────────
@@ -47,7 +54,7 @@ const CONFIG = {
 
     paresDesejados: ['XRP/USDT'],
 
-    logFile: './bot_xrp.txt',
+    logFile: path.join(dataDir, 'bot_xrp.txt'),  // ← ALTERADO
 };
 
 // ──────────────────────────────────────────────────────────
@@ -63,7 +70,7 @@ function log(msg) {
 // ──────────────────────────────────────────────────────────
 // BANCO DE DADOS
 // ──────────────────────────────────────────────────────────
-const adapter = new FileSync('grid_mexc_xrp.json');
+const adapter = new FileSync(path.join(dataDir, 'grid_mexc_xrp.json'));  // ← ALTERADO
 const db = low(adapter);
 const hoje = new Date().toLocaleDateString('pt-BR');
 
@@ -603,7 +610,20 @@ bot.onText(/\/config/, msg => tg(msg.chat.id,
     `Câmbio exibição: R$${CONFIG.cambioExibicao}`
 ));
 
+// ──────────────────────────────────────────────────────────
+// SERVIDOR HTTP PARA RENDER (KEEP-ALIVE)
+// ──────────────────────────────────────────────────────────
+const express = require('express');
+const serverApp = express();
 
+serverApp.get('/', (req, res) => {
+    res.send('✅ Bot XRP Grid está rodando!');
+});
+
+const SERVER_PORT = process.env.PORT || 3000;
+serverApp.listen(SERVER_PORT, () => {
+    console.log(`🌐 Servidor keep-alive rodando na porta ${SERVER_PORT}`);
+});
 
 // ──────────────────────────────────────────────────────────
 // START
