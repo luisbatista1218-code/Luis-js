@@ -360,7 +360,10 @@ function atualizarStats(compras, fechados) {
         }
     }
 
-    s.updatedAt = ptBR(new Date());
+   // s.updatedAt = ptBR(new Date());
+    const agora = new Date();
+    const brasilia = new Date(agora.getTime() - (3 * 60 * 60 * 1000));
+    s.updatedAt = brasilia.toLocaleString('pt-BR');
     db.set('stats', s).write();
     db.set('perdaHojeUSDT', perdaHoje).write();
 
