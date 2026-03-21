@@ -50,7 +50,7 @@ const CONFIG = {
     // ─── RECALIBRAÇÃO ────────────────────────────────────
     // Recalibra a referência quando o mercado se afastar
     // mais que este % SEM posições abertas no par
-    desvioRecalibraçao : 3.0,     // %
+    desvioRecalibraçao : 1.0,     // %
 
     paresDesejados: ['XRP/USDT'],
 
