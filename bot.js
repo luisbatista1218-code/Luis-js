@@ -27,7 +27,7 @@ const CONFIG = {
     mexcApiKey     : process.env.MEXC_API_KEY,
     mexcApiSecret  : process.env.MEXC_API_SECRET,
 
-    scanInterval   : 10000,       // 10 segundos entre cada scan
+    scanInterval   : 5000,        // 5 segundos (melhor custo-benefício)
     timeoutApi     : 20000,
 
     // ─── CAPITAL EM USDT ───────────────────────────────────
@@ -48,9 +48,9 @@ const CONFIG = {
     stopPorPosicao   : 1.5,       
 
     // ─── RECALIBRAÇÃO ────────────────────────────────────
-    // Recalibra a referência quando o mercado se afastar
-    // mais que este % SEM posições abertas no par
-    desvioRecalibraçao : 1.0,     // %
+    // Recalibra quando o mercado se afastar mais que este %
+    // SEM posições abertas (ajustado para 0.3% para ser mais responsivo)
+    desvioRecalibraçao : 0.3,     // %
 
     paresDesejados: ['XRP/USDT'],
 
@@ -228,16 +228,24 @@ async function abrirOrdem(par, nivel, precoCompra, precoVenda, pctAbaixo) {
     const key = `${par}__N${nivel}`;
 
     // Já existe posição neste nível?
-    if (posicoes[key]) return null;
-
-    // Limite de exposição total
-    if (exposicaoAtual() + CONFIG.valorCamadaUSDT > CONFIG.maxExposicaoUSDT + 0.01) {
-        log(`[SKIP N${nivel}] Exposição máxima atingida`);
+    if (posicoes[key]) {
+        log(`  ⚠️ N${nivel} já possui posição aberta — ignorando`);
         return null;
     }
 
-    const resultado = await executarOrdem(par, 'compra', precoCompra, CONFIG.valorCamadaUSDT);
+    // Limite de exposição total
+    if (exposicaoAtual() + CONFIG.valorCamadaUSDT > CONFIG.maxExposicaoUSDT + 0.01) {
+        log(`  ⚠️ EXPOSIÇÃO MÁXIMA! Atual: $${f(exposicaoAtual(), 2)} | Máx: $${CONFIG.maxExposicaoUSDT} — pulando N${nivel}`);
+        return null;
+    }
+
+    // CORREÇÃO: usar preço ATUAL do mercado, não precoCompra calculado
+    const precoMercado = db.get('referencias').get(par).get('precoAtual').value() || precoCompra;
+    const resultado = await executarOrdem(par, 'compra', precoMercado, CONFIG.valorCamadaUSDT);
     if (!resultado) return null;
+    
+    // Salvar o preço real que comprou (não o calculado)
+    precoCompra = precoMercado;
 
     // Stop: preço cai stopPorPosicao% abaixo do preço de compra
     const alvoStop = D(precoCompra)
@@ -439,20 +447,24 @@ async function loop() {
     let refs = db.get('referencias').value();
 
     if (!refs[par]) {
-        refs[par] = { preco: precoAtual, ts: now() };
+        refs[par] = { preco: precoAtual, precoAtual: precoAtual, ts: now() };
         db.set('referencias', refs).write();
         log(`📌 [REF INICIAL] ${par} = ${f(precoAtual, 6)} USDT`);
+    } else {
+        // CORREÇÃO: sempre atualiza o preço atual
+        refs[par].precoAtual = precoAtual;
+        db.set('referencias', refs).write();
     }
 
     const precoRef = refs[par].preco;
     const diffPct  = ((precoAtual - precoRef) / precoRef) * 100;
     const diffAbs  = Math.abs(diffPct);
 
-    // Recalibração proativa: mercado se afastou muito sem posições abertas
-    if (diffAbs > CONFIG.desvioRecalibraçao && posicoesDoPar(par).length === 0) {
-        refs[par] = { preco: precoAtual, ts: now() };
+    // CORREÇÃO: recalibra quando sem posições (usa valor da config)
+    if (posicoesDoPar(par).length === 0 && diffAbs > CONFIG.desvioRecalibraçao) {
+        refs[par] = { preco: precoAtual, precoAtual: precoAtual, ts: now() };
         db.set('referencias', refs).write();
-        log(`📌 [RECALIBRA] Desvio ${diffAbs.toFixed(2)}% > ${CONFIG.desvioRecalibraçao}% sem posições → nova ref ${f(precoAtual, 6)}`);
+        log(`🔄 [RECALIBRA] Sem posições + desvio ${diffAbs.toFixed(2)}% → nova ref ${f(precoAtual, 6)}`);
     }
 
     const precoRefAtual = db.get('referencias').value()[par].preco;
