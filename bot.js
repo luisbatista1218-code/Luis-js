@@ -32,8 +32,8 @@ const CONFIG = {
     valorCamadaUSDT : 3.47,
     cambioExibicao  : parseFloat(process.env.CAMBIO_EXIBICAO) || 5.31,
 
-    spreadCompra   : 0.5,
-    spreadVenda    : 0.5,
+    spreadCompra   : 0.2,
+    spreadVenda    : 0.2,
     numCamadas     : 3,
     distCamadas    : 0.2,
 
