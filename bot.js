@@ -197,7 +197,7 @@ function gerarNiveis(precoRef) {
 // ──────────────────────────────────────────────────────────
 // EXECUTAR ORDEM (valores em USDT)
 // ──────────────────────────────────────────────────────────
-async function executarOrdem(par, tipo, precoUSDT, valorUSDT) {
+/*async function executarOrdem(par, tipo, precoUSDT, valorUSDT) {
     const quantidade = parseFloat(D(valorUSDT).div(precoUSDT).toFixed(6));
 
     if (CONFIG.MODO_SIMULADO) {
@@ -218,8 +218,29 @@ async function executarOrdem(par, tipo, precoUSDT, valorUSDT) {
         log(`❌ [ERRO ORDEM] ${tipo} ${par}: ${err.message}`);
         return null;
     }
-}
+}*/
+async function executarOrdem(par, tipo, precoUSDT, valorUSDT) {
+    const quantidade = parseFloat(D(valorUSDT).div(precoUSDT).toFixed(6));
 
+    if (CONFIG.MODO_SIMULADO) {
+        log(`✅ [SIMULADO] ${tipo.toUpperCase()} ${par} $${f(valorUSDT, 2)} USDT (${quantidade} @ ${precoUSDT})`);
+        return { id: `sim_${Date.now()}`, preco: precoUSDT, quantidade, status: 'closed' };
+    }
+
+    try {
+        let ordem;
+        if (tipo === 'compra') {
+            ordem = await exchange.createMarketBuyOrder(par, quantidade);
+        } else {
+            ordem = await exchange.createMarketSellOrder(par, quantidade);
+        }
+        log(`✅ [REAL] ${tipo.toUpperCase()} ${par} $${f(valorUSDT, 2)} USDT`);
+        return { id: ordem.id, preco: ordem.price || precoUSDT, quantidade: ordem.amount, status: ordem.status };
+    } catch (err) {
+        log(`❌ [ERRO ORDEM] ${tipo} ${par}: ${err.message}`);
+        return null;
+    }
+}
 // ──────────────────────────────────────────────────────────
 // ABRIR POSIÇÃO
 // ──────────────────────────────────────────────────────────
