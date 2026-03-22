@@ -27,7 +27,7 @@ const CONFIG = {
     mexcApiKey     : process.env.MEXC_API_KEY,
     mexcApiSecret  : process.env.MEXC_API_SECRET,
 
-    scanInterval   : 5000,        // 5 segundos (melhor custo-benefício)
+    scanInterval   : 5000,        // 5 segundos
     timeoutApi     : 20000,
 
     // ─── CAPITAL EM USDT ───────────────────────────────────
@@ -36,7 +36,7 @@ const CONFIG = {
     valorCamadaUSDT : 3.47,       
     cambioExibicao  : process.env.CAMBIO_EXIBICAO,       // Só para exibição em BRL — não afeta lógica
 
-    // ─── GRID 0,8% SIMÉTRICO ──────────────────────────────
+    // ─── GRID 0,5% SIMÉTRICO ──────────────────────────────
     spreadCompra   : 0.5,         // Compra 0,8% abaixo da referência
     spreadVenda    : 0.5,         // Vende 0,8% acima do preço de compra
     numCamadas     : 3,           // Número de níveis
@@ -48,9 +48,7 @@ const CONFIG = {
     stopPorPosicao   : 1.5,       
 
     // ─── RECALIBRAÇÃO ────────────────────────────────────
-    // Recalibra quando o mercado se afastar mais que este %
-    // SEM posições abertas (ajustado para 0.3% para ser mais responsivo)
-    desvioRecalibraçao : 0.3,     // %
+    desvioRecalibraçao : 0.3,     // Recalibra com 0.3% de desvio sem posições
 
     paresDesejados: ['XRP/USDT'],
 
@@ -197,7 +195,7 @@ function gerarNiveis(precoRef) {
 // ──────────────────────────────────────────────────────────
 // EXECUTAR ORDEM (valores em USDT)
 // ──────────────────────────────────────────────────────────
-/*async function executarOrdem(par, tipo, precoUSDT, valorUSDT) {
+async function executarOrdem(par, tipo, precoUSDT, valorUSDT) {
     const quantidade = parseFloat(D(valorUSDT).div(precoUSDT).toFixed(6));
 
     if (CONFIG.MODO_SIMULADO) {
@@ -218,69 +216,40 @@ function gerarNiveis(precoRef) {
         log(`❌ [ERRO ORDEM] ${tipo} ${par}: ${err.message}`);
         return null;
     }
-}*/
-async function executarOrdem(par, tipo, precoUSDT, valorUSDT) {
-    const quantidade = parseFloat(D(valorUSDT).div(precoUSDT).toFixed(6));
-
-    if (CONFIG.MODO_SIMULADO) {
-        log(`✅ [SIMULADO] ${tipo.toUpperCase()} ${par} $${f(valorUSDT, 2)} USDT (${quantidade} @ ${precoUSDT})`);
-        return { id: `sim_${Date.now()}`, preco: precoUSDT, quantidade, status: 'closed' };
-    }
-
-    try {
-        let ordem;
-        if (tipo === 'compra') {
-            ordem = await exchange.createMarketBuyOrder(par, quantidade);
-        } else {
-            ordem = await exchange.createMarketSellOrder(par, quantidade);
-        }
-        log(`✅ [REAL] ${tipo.toUpperCase()} ${par} $${f(valorUSDT, 2)} USDT`);
-        return { id: ordem.id, preco: ordem.price || precoUSDT, quantidade: ordem.amount, status: ordem.status };
-    } catch (err) {
-        log(`❌ [ERRO ORDEM] ${tipo} ${par}: ${err.message}`);
-        return null;
-    }
 }
+
 // ──────────────────────────────────────────────────────────
 // ABRIR POSIÇÃO
 // ──────────────────────────────────────────────────────────
-async function abrirOrdem(par, nivel, precoCompra, precoVenda, pctAbaixo) {
+async function abrirOrdem(par, nivel, precoCompra, precoVenda, pctAbaixo, precoAtual) {
     const posicoes = db.get('posicoes').value();
     const key = `${par}__N${nivel}`;
 
     // Já existe posição neste nível?
-    if (posicoes[key]) {
-        log(`  ⚠️ N${nivel} já possui posição aberta — ignorando`);
-        return null;
-    }
+    if (posicoes[key]) return null;
 
     // Limite de exposição total
     if (exposicaoAtual() + CONFIG.valorCamadaUSDT > CONFIG.maxExposicaoUSDT + 0.01) {
-        log(`  ⚠️ EXPOSIÇÃO MÁXIMA! Atual: $${f(exposicaoAtual(), 2)} | Máx: $${CONFIG.maxExposicaoUSDT} — pulando N${nivel}`);
+        log(`[SKIP N${nivel}] Exposição máxima atingida`);
         return null;
     }
 
-    // CORREÇÃO: usar preço ATUAL do mercado, não precoCompra calculado
-    const precoMercado = db.get('referencias').get(par).get('precoAtual').value() || precoCompra;
-    const resultado = await executarOrdem(par, 'compra', precoMercado, CONFIG.valorCamadaUSDT);
+    const resultado = await executarOrdem(par, 'compra', precoAtual, CONFIG.valorCamadaUSDT);
     if (!resultado) return null;
-    
-    // Salvar o preço real que comprou (não o calculado)
-    precoCompra = precoMercado;
 
-    // Stop: preço cai stopPorPosicao% abaixo do preço de compra
-    const alvoStop = D(precoCompra)
+    // Stop: preço cai stopPorPosicao% abaixo do preço REAL de compra
+    const alvoStop = D(precoAtual)
         .times(D(1).minus(D(CONFIG.stopPorPosicao).div(100)))
         .toNumber();
 
-    const qtd = D(CONFIG.valorCamadaUSDT).div(precoCompra).toNumber();
+    const qtd = D(CONFIG.valorCamadaUSDT).div(precoAtual).toNumber();
 
     const pos = {
         par, nivel, pctAbaixo,
-        precoCompra,
+        precoCompra: precoAtual,  // salva o preço REAL
         precoVenda,
         alvoStop,
-        qtd,                              // quantidade em XRP
+        qtd,
         valorUSDT : CONFIG.valorCamadaUSDT,
         aberto    : now(),
         orderId   : resultado.id,
@@ -289,8 +258,8 @@ async function abrirOrdem(par, nivel, precoCompra, precoVenda, pctAbaixo) {
     posicoes[key] = pos;
     db.set('posicoes', posicoes).write();
 
-    const brl = (precoCompra * CONFIG.cambioExibicao).toFixed(4);
-    log(`📦 [ABRIR] ${par} N${nivel} @ ${f(precoCompra, 6)} USDT (≈ R$${brl}) | Stop @ ${f(alvoStop, 6)}`);
+    const brl = (precoAtual * CONFIG.cambioExibicao).toFixed(4);
+    log(`📦 [ABRIR] ${par} N${nivel} @ ${f(precoAtual, 6)} USDT (≈ R$${brl}) | Stop @ ${f(alvoStop, 6)}`);
     return pos;
 }
 
@@ -468,24 +437,20 @@ async function loop() {
     let refs = db.get('referencias').value();
 
     if (!refs[par]) {
-        refs[par] = { preco: precoAtual, precoAtual: precoAtual, ts: now() };
+        refs[par] = { preco: precoAtual, ts: now() };
         db.set('referencias', refs).write();
         log(`📌 [REF INICIAL] ${par} = ${f(precoAtual, 6)} USDT`);
-    } else {
-        // CORREÇÃO: sempre atualiza o preço atual
-        refs[par].precoAtual = precoAtual;
-        db.set('referencias', refs).write();
     }
 
     const precoRef = refs[par].preco;
     const diffPct  = ((precoAtual - precoRef) / precoRef) * 100;
     const diffAbs  = Math.abs(diffPct);
 
-    // CORREÇÃO: recalibra quando sem posições (usa valor da config)
-    if (posicoesDoPar(par).length === 0 && diffAbs > CONFIG.desvioRecalibraçao) {
-        refs[par] = { preco: precoAtual, precoAtual: precoAtual, ts: now() };
+    // Recalibração proativa: mercado se afastou muito sem posições abertas
+    if (diffAbs > CONFIG.desvioRecalibraçao && posicoesDoPar(par).length === 0) {
+        refs[par] = { preco: precoAtual, ts: now() };
         db.set('referencias', refs).write();
-        log(`🔄 [RECALIBRA] Sem posições + desvio ${diffAbs.toFixed(2)}% → nova ref ${f(precoAtual, 6)}`);
+        log(`📌 [RECALIBRA] Desvio ${diffAbs.toFixed(2)}% > ${CONFIG.desvioRecalibraçao}% sem posições → nova ref ${f(precoAtual, 6)}`);
     }
 
     const precoRefAtual = db.get('referencias').value()[par].preco;
@@ -509,7 +474,7 @@ async function loop() {
     for (const n of niveis) {
         if (precoAtual <= n.precoCompra) {
             log(`  📉 Preço ${f(precoAtual, 6)} <= N${n.nivel} (${f(n.precoCompra, 6)}) → abrindo`);
-            const pos = await abrirOrdem(par, n.nivel, n.precoCompra, n.precoVenda, n.pctAbaixo);
+            const pos = await abrirOrdem(par, n.nivel, n.precoCompra, n.precoVenda, n.pctAbaixo, precoAtual);
             if (pos) todasCompras.push(pos);
         }
     }
@@ -537,7 +502,7 @@ async function loop() {
 // COMANDOS TELEGRAM
 // ──────────────────────────────────────────────────────────
 bot.onText(/\/start/, msg => tg(msg.chat.id,
-    '🤖 BOT GRID XRP 0,8% — MEXC\n\n' +
+    '🤖 BOT GRID XRP 0,5% — MEXC\n\n' +
     `Capital: ~$${CONFIG.maxExposicaoUSDT} USDT (${CONFIG.numCamadas} x $${CONFIG.valorCamadaUSDT})\n` +
     `Spread compra: ${CONFIG.spreadCompra}% abaixo\n` +
     `Spread venda:  ${CONFIG.spreadVenda}% acima\n` +
