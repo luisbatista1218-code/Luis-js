@@ -48,7 +48,7 @@ const CONFIG = {
     stopPorPosicao   : 1.5,       
 
     // ─── RECALIBRAÇÃO ────────────────────────────────────
-    desvioRecalibraçao : 0.3,     // Recalibra com 0.3% de desvio sem posições
+    desvioRecalibraçao : 3.0,     // Recalibra com 0.3% de desvio sem posições
 
     paresDesejados: ['XRP/USDT'],
 
