@@ -567,7 +567,7 @@ bot.onText(/\/grid/, msg => {
     const niveis   = gerarNiveis(precoRef);
     const refBRL   = (precoRef * CONFIG.cambioExibicao).toFixed(4);
 
-    let txt = `📐 GRID ATUAL — XRP 0,8%\n\n`;
+    let txt = `📐 GRID ATUAL — XRP 0,5%\n\n`;
     txt += `Referência: ${f(precoRef, 6)} USDT (R$${refBRL})\n`;
     txt += `Atualizada: ${ptBR(refs['XRP/USDT'].ts)}\n\n`;
 
@@ -630,7 +630,7 @@ serverApp.listen(SERVER_PORT, () => {
 // START
 // ──────────────────────────────────────────────────────────
 log('='.repeat(70));
-log('  BOT GRID XRP 0,8% — MEXC SPOT');
+log('  BOT GRID XRP 0,5% — MEXC SPOT');
 log(`  Capital: $${CONFIG.maxExposicaoUSDT} USDT | ${CONFIG.numCamadas} níveis de $${CONFIG.valorCamadaUSDT}`);
 log(`  Spread: ${CONFIG.spreadCompra}% compra | ${CONFIG.spreadVenda}% venda`);
 log(`  Stop: ${CONFIG.stopPorPosicao}%/posição | $${CONFIG.stopDiarioUSDT} USDT/dia`);
