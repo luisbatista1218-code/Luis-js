@@ -36,9 +36,9 @@ const CONFIG = {
     valorCamadaUSDT : 3.47,       
     cambioExibicao  : process.env.CAMBIO_EXIBICAO,       // Só para exibição em BRL — não afeta lógica
 
-    // ─── GRID 0,8% SIMÉTRICO ──────────────────────────────
-    spreadCompra   : 0.8,         // Compra 0,8% abaixo da referência
-    spreadVenda    : 0.8,         // Vende 0,8% acima do preço de compra
+    // ─── GRID 0,5% SIMÉTRICO ──────────────────────────────
+    spreadCompra   : 0.5,         // Compra 0,5% abaixo da referência
+    spreadVenda    : 0.5,         // Vende 0,5% acima do preço de compra
     numCamadas     : 3,           // Número de níveis
     distCamadas    : 0.2,         // 0,2% de distância entre níveis
 
