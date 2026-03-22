@@ -27,7 +27,7 @@ const CONFIG = {
     mexcApiKey     : process.env.MEXC_API_KEY,
     mexcApiSecret  : process.env.MEXC_API_SECRET,
 
-    scanInterval   : 5000,        // 5 segundos
+    scanInterval   : 10000,       // 10 segundos entre cada scan
     timeoutApi     : 20000,
 
     // ─── CAPITAL EM USDT ───────────────────────────────────
@@ -36,9 +36,9 @@ const CONFIG = {
     valorCamadaUSDT : 3.47,       
     cambioExibicao  : process.env.CAMBIO_EXIBICAO,       // Só para exibição em BRL — não afeta lógica
 
-    // ─── GRID 0,5% SIMÉTRICO ──────────────────────────────
-    spreadCompra   : 0.5,         // Compra 0,8% abaixo da referência
-    spreadVenda    : 0.5,         // Vende 0,8% acima do preço de compra
+    // ─── GRID 0,8% SIMÉTRICO ──────────────────────────────
+    spreadCompra   : 0.8,         // Compra 0,8% abaixo da referência
+    spreadVenda    : 0.8,         // Vende 0,8% acima do preço de compra
     numCamadas     : 3,           // Número de níveis
     distCamadas    : 0.2,         // 0,2% de distância entre níveis
 
@@ -48,7 +48,9 @@ const CONFIG = {
     stopPorPosicao   : 1.5,       
 
     // ─── RECALIBRAÇÃO ────────────────────────────────────
-    desvioRecalibraçao : 3.0,     // Recalibra com 0.3% de desvio sem posições
+    // Recalibra a referência quando o mercado se afastar
+    // mais que este % SEM posições abertas no par
+    desvioRecalibraçao : 5.0,     // %
 
     paresDesejados: ['XRP/USDT'],
 
@@ -221,7 +223,7 @@ async function executarOrdem(par, tipo, precoUSDT, valorUSDT) {
 // ──────────────────────────────────────────────────────────
 // ABRIR POSIÇÃO
 // ──────────────────────────────────────────────────────────
-async function abrirOrdem(par, nivel, precoCompra, precoVenda, pctAbaixo, precoAtual) {
+async function abrirOrdem(par, nivel, precoCompra, precoVenda, pctAbaixo) {
     const posicoes = db.get('posicoes').value();
     const key = `${par}__N${nivel}`;
 
@@ -234,22 +236,22 @@ async function abrirOrdem(par, nivel, precoCompra, precoVenda, pctAbaixo, precoA
         return null;
     }
 
-    const resultado = await executarOrdem(par, 'compra', precoAtual, CONFIG.valorCamadaUSDT);
+    const resultado = await executarOrdem(par, 'compra', precoCompra, CONFIG.valorCamadaUSDT);
     if (!resultado) return null;
 
-    // Stop: preço cai stopPorPosicao% abaixo do preço REAL de compra
-    const alvoStop = D(precoAtual)
+    // Stop: preço cai stopPorPosicao% abaixo do preço de compra
+    const alvoStop = D(precoCompra)
         .times(D(1).minus(D(CONFIG.stopPorPosicao).div(100)))
         .toNumber();
 
-    const qtd = D(CONFIG.valorCamadaUSDT).div(precoAtual).toNumber();
+    const qtd = D(CONFIG.valorCamadaUSDT).div(precoCompra).toNumber();
 
     const pos = {
         par, nivel, pctAbaixo,
-        precoCompra: precoAtual,  // salva o preço REAL
+        precoCompra,
         precoVenda,
         alvoStop,
-        qtd,
+        qtd,                              // quantidade em XRP
         valorUSDT : CONFIG.valorCamadaUSDT,
         aberto    : now(),
         orderId   : resultado.id,
@@ -258,8 +260,8 @@ async function abrirOrdem(par, nivel, precoCompra, precoVenda, pctAbaixo, precoA
     posicoes[key] = pos;
     db.set('posicoes', posicoes).write();
 
-    const brl = (precoAtual * CONFIG.cambioExibicao).toFixed(4);
-    log(`📦 [ABRIR] ${par} N${nivel} @ ${f(precoAtual, 6)} USDT (≈ R$${brl}) | Stop @ ${f(alvoStop, 6)}`);
+    const brl = (precoCompra * CONFIG.cambioExibicao).toFixed(4);
+    log(`📦 [ABRIR] ${par} N${nivel} @ ${f(precoCompra, 6)} USDT (≈ R$${brl}) | Stop @ ${f(alvoStop, 6)}`);
     return pos;
 }
 
@@ -469,12 +471,23 @@ async function loop() {
     // ── VERIFICAR VENDAS (antes de abrir novas compras) ───
     const todosFechados = await verificarFechamentos(par, precoAtual);
 
+    // ── COMPRA INICIAL N1 (se não tem nenhuma posição) ────
+    const posAbertas = Object.keys(db.get('posicoes').value()).length;
+    if (posAbertas === 0) {
+        log(`🎯 [ENTRADA INICIAL] Sem posições — comprando N1 no preço atual`);
+        const n1 = niveis[0];
+        const pos = await abrirOrdem(par, n1.nivel, n1.precoCompra, n1.precoVenda, n1.pctAbaixo, precoAtual);
+        if (pos) {
+            await enviarAlertas([pos], []);
+        }
+    }
+
     // ── VERIFICAR COMPRAS ─────────────────────────────────
     const todasCompras = [];
     for (const n of niveis) {
         if (precoAtual <= n.precoCompra) {
             log(`  📉 Preço ${f(precoAtual, 6)} <= N${n.nivel} (${f(n.precoCompra, 6)}) → abrindo`);
-            const pos = await abrirOrdem(par, n.nivel, n.precoCompra, n.precoVenda, n.pctAbaixo, precoAtual);
+            const pos = await abrirOrdem(par, n.nivel, n.precoCompra, n.precoVenda, n.pctAbaixo);
             if (pos) todasCompras.push(pos);
         }
     }
@@ -502,7 +515,7 @@ async function loop() {
 // COMANDOS TELEGRAM
 // ──────────────────────────────────────────────────────────
 bot.onText(/\/start/, msg => tg(msg.chat.id,
-    '🤖 BOT GRID XRP 0,5% — MEXC\n\n' +
+    '🤖 BOT GRID XRP 0,8% — MEXC\n\n' +
     `Capital: ~$${CONFIG.maxExposicaoUSDT} USDT (${CONFIG.numCamadas} x $${CONFIG.valorCamadaUSDT})\n` +
     `Spread compra: ${CONFIG.spreadCompra}% abaixo\n` +
     `Spread venda:  ${CONFIG.spreadVenda}% acima\n` +
@@ -567,7 +580,7 @@ bot.onText(/\/grid/, msg => {
     const niveis   = gerarNiveis(precoRef);
     const refBRL   = (precoRef * CONFIG.cambioExibicao).toFixed(4);
 
-    let txt = `📐 GRID ATUAL — XRP 0,5%\n\n`;
+    let txt = `📐 GRID ATUAL — XRP 0,8%\n\n`;
     txt += `Referência: ${f(precoRef, 6)} USDT (R$${refBRL})\n`;
     txt += `Atualizada: ${ptBR(refs['XRP/USDT'].ts)}\n\n`;
 
@@ -630,7 +643,7 @@ serverApp.listen(SERVER_PORT, () => {
 // START
 // ──────────────────────────────────────────────────────────
 log('='.repeat(70));
-log('  BOT GRID XRP 0,5% — MEXC SPOT');
+log('  BOT GRID XRP 0,8% — MEXC SPOT');
 log(`  Capital: $${CONFIG.maxExposicaoUSDT} USDT | ${CONFIG.numCamadas} níveis de $${CONFIG.valorCamadaUSDT}`);
 log(`  Spread: ${CONFIG.spreadCompra}% compra | ${CONFIG.spreadVenda}% venda`);
 log(`  Stop: ${CONFIG.stopPorPosicao}%/posição | $${CONFIG.stopDiarioUSDT} USDT/dia`);
