@@ -1,18 +1,17 @@
 'use strict';
 
-
 const TelegramBot = require('node-telegram-bot-api');
 const ccxt        = require('ccxt');
 const low         = require('lowdb');
 const FileSync    = require('lowdb/adapters/FileSync');
 const Decimal     = require('decimal.js');
 const fs          = require('fs');
-const path        = require('path');  // ← ADICIONADO
+const path        = require('path');
 
 require('dotenv').config();
 
 // ──────────────────────────────────────────────────────────
-// CAMINHO DINÂMICO PARA RENDER (ADICIONADO)
+// CAMINHO DINÂMICO PARA RENDER
 // ──────────────────────────────────────────────────────────
 const dataDir = process.env.RENDER ? '/app/data' : '.';
 
@@ -23,38 +22,32 @@ const CONFIG = {
     telegramToken  : process.env.TELEGRAM_TOKEN,
     chatId         : process.env.CHAT_ID,
 
-    MODO_SIMULADO  : process.env.MODO_SIMULADO === 'true',       // Mude para false quando quiser operar de verdade
+    MODO_SIMULADO  : process.env.MODO_SIMULADO === 'true',
     mexcApiKey     : process.env.MEXC_API_KEY,
     mexcApiSecret  : process.env.MEXC_API_SECRET,
 
-    scanInterval   : 10000,       // 10 segundos entre cada scan
+    scanInterval   : 5000,        // 5 segundos
     timeoutApi     : 20000,
 
-    // ─── CAPITAL EM USDT ───────────────────────────────────
-    // 10.41 usdt pra 3 ≈ $3.47 USDT por nível
-    // Ajuste valorCamadaUSDT conforme o câmbio do dia
-    valorCamadaUSDT : 3.47,       
-    cambioExibicao  : process.env.CAMBIO_EXIBICAO,       // Só para exibição em BRL — não afeta lógica
+    valorCamadaUSDT : 3.47,
+    cambioExibicao  : parseFloat(process.env.CAMBIO_EXIBICAO) || 5.31,
 
-    // ─── GRID 0,5% SIMÉTRICO ──────────────────────────────
-    spreadCompra   : 0.5,         // Compra 0,5% abaixo da referência
-    spreadVenda    : 0.5,         // Vende 0,5% acima do preço de compra
-    numCamadas     : 3,           // Número de níveis
-    distCamadas    : 0.2,         // 0,2% de distância entre níveis
+    // ─── GRID 0.5% SIMÉTRICO ──────────────────────────────
+    spreadCompra   : 0.5,         // Compra 0.5% abaixo
+    spreadVenda    : 0.5,         // Vende 0.5% acima
+    numCamadas     : 3,
+    distCamadas    : 0.2,         // 0.2% entre níveis
 
     // ─── RISCO ────────────────────────────────────────────
-    maxExposicaoUSDT : 10.41,     
-    stopDiarioUSDT   : 0.95,      
-    stopPorPosicao   : 1.5,       
+    maxExposicaoUSDT : 10.41,
+    stopDiarioUSDT   : 0.95,
+    stopPorPosicao   : 1.5,
 
     // ─── RECALIBRAÇÃO ────────────────────────────────────
-    // Recalibra a referência quando o mercado se afastar
-    // mais que este % SEM posições abertas no par
-    desvioRecalibraçao : 5.0,     // %
+    desvioRecalibraçao : 5.0,     // 5% - só em movimentos grandes
 
     paresDesejados: ['XRP/USDT'],
-
-    logFile: path.join(dataDir, 'bot_xrp.txt'),  // ← ALTERADO
+    logFile: path.join(dataDir, 'bot_xrp.txt'),
 };
 
 // ──────────────────────────────────────────────────────────
@@ -70,7 +63,7 @@ function log(msg) {
 // ──────────────────────────────────────────────────────────
 // BANCO DE DADOS
 // ──────────────────────────────────────────────────────────
-const adapter = new FileSync(path.join(dataDir, 'grid_mexc_xrp.json'));  // ← ALTERADO
+const adapter = new FileSync(path.join(dataDir, 'grid_mexc_xrp.json'));
 const db = low(adapter);
 const hoje = new Date().toLocaleDateString('pt-BR');
 
@@ -169,25 +162,20 @@ const now = () => new Date().toISOString();
 const ptBR = dt => new Date(dt).toLocaleString('pt-BR');
 const f   = (n, d = 4) => parseFloat(n || 0).toFixed(d);
 
-// Exposição total em USDT somando todas as posições abertas
 function exposicaoAtual() {
     return Object.values(db.get('posicoes').value())
         .reduce((s, p) => s + (p.valorUSDT || 0), 0);
 }
 
-// Posições abertas de um par específico
 function posicoesDoPar(par) {
     return Object.values(db.get('posicoes').value()).filter(p => p.par === par);
 }
 
-// Gera os níveis de compra/venda a partir de um preço de referência
 function gerarNiveis(precoRef) {
     const niveis = [];
     for (let i = 1; i <= CONFIG.numCamadas; i++) {
-        // Cada nível fica distCamadas% mais fundo que o anterior
         const pctAbaixo  = D(CONFIG.spreadCompra).plus(D(CONFIG.distCamadas).times(i - 1));
         const precoCompra = D(precoRef).times(D(1).minus(pctAbaixo.div(100))).toNumber();
-        // Alvo de venda: 0,8% acima do preço de compra daquele nível
         const precoVenda  = D(precoCompra).times(D(1).plus(D(CONFIG.spreadVenda).div(100))).toNumber();
         niveis.push({ nivel: i, precoCompra, precoVenda, pctAbaixo: pctAbaixo.toNumber() });
     }
@@ -221,37 +209,41 @@ async function executarOrdem(par, tipo, precoUSDT, valorUSDT) {
 }
 
 // ──────────────────────────────────────────────────────────
-// ABRIR POSIÇÃO
+// ABRIR POSIÇÃO - ACEITA PREÇO DE MERCADO
 // ──────────────────────────────────────────────────────────
-async function abrirOrdem(par, nivel, precoCompra, precoVenda, pctAbaixo) {
+async function abrirOrdem(par, nivel, precoCompra, precoVenda, pctAbaixo, precoMercado = null) {
     const posicoes = db.get('posicoes').value();
     const key = `${par}__N${nivel}`;
 
     // Já existe posição neste nível?
-    if (posicoes[key]) return null;
-
-    // Limite de exposição total
-    if (exposicaoAtual() + CONFIG.valorCamadaUSDT > CONFIG.maxExposicaoUSDT + 0.01) {
-        log(`[SKIP N${nivel}] Exposição máxima atingida`);
+    if (posicoes[key]) {
+        log(`  ⚠️ N${nivel} já possui posição aberta`);
         return null;
     }
 
-    const resultado = await executarOrdem(par, 'compra', precoCompra, CONFIG.valorCamadaUSDT);
+    // Limite de exposição total
+    if (exposicaoAtual() + CONFIG.valorCamadaUSDT > CONFIG.maxExposicaoUSDT + 0.01) {
+        log(`  ⚠️ Exposição máxima atingida`);
+        return null;
+    }
+
+    // USA PREÇO DE MERCADO se fornecido, senão usa precoCompra calculado
+    const precoReal = precoMercado || precoCompra;
+    
+    const resultado = await executarOrdem(par, 'compra', precoReal, CONFIG.valorCamadaUSDT);
     if (!resultado) return null;
 
-    // Stop: preço cai stopPorPosicao% abaixo do preço de compra
-    const alvoStop = D(precoCompra)
-        .times(D(1).minus(D(CONFIG.stopPorPosicao).div(100)))
-        .toNumber();
-
-    const qtd = D(CONFIG.valorCamadaUSDT).div(precoCompra).toNumber();
+    // Recalcula venda e stop baseado no preço REAL de compra
+    const precoVendaReal = D(precoReal).times(D(1).plus(D(CONFIG.spreadVenda).div(100))).toNumber();
+    const alvoStop = D(precoReal).times(D(1).minus(D(CONFIG.stopPorPosicao).div(100))).toNumber();
+    const qtd = D(CONFIG.valorCamadaUSDT).div(precoReal).toNumber();
 
     const pos = {
         par, nivel, pctAbaixo,
-        precoCompra,
-        precoVenda,
+        precoCompra: precoReal,
+        precoVenda: precoVendaReal,
         alvoStop,
-        qtd,                              // quantidade em XRP
+        qtd,
         valorUSDT : CONFIG.valorCamadaUSDT,
         aberto    : now(),
         orderId   : resultado.id,
@@ -260,8 +252,8 @@ async function abrirOrdem(par, nivel, precoCompra, precoVenda, pctAbaixo) {
     posicoes[key] = pos;
     db.set('posicoes', posicoes).write();
 
-    const brl = (precoCompra * CONFIG.cambioExibicao).toFixed(4);
-    log(`📦 [ABRIR] ${par} N${nivel} @ ${f(precoCompra, 6)} USDT (≈ R$${brl}) | Stop @ ${f(alvoStop, 6)}`);
+    const brl = (precoReal * CONFIG.cambioExibicao).toFixed(4);
+    log(`📦 [ABRIR] ${par} N${nivel} @ ${f(precoReal, 6)} USDT (≈ R$${brl}) | Stop @ ${f(alvoStop, 6)}`);
     return pos;
 }
 
@@ -274,7 +266,6 @@ async function fecharPosicao(key, pos, precoAtual, motivo) {
     const resultado = await executarOrdem(pos.par, 'venda', precoAtual, pos.valorUSDT);
     if (!resultado) return null;
 
-    // Lucro/prejuízo em USDT puro
     const recebidoUSDT = D(pos.qtd).times(precoAtual).toNumber();
     const lucroUSDT    = D(recebidoUSDT).minus(pos.valorUSDT).toNumber();
     const lucroBRL     = lucroUSDT * CONFIG.cambioExibicao;
@@ -292,7 +283,6 @@ async function fecharPosicao(key, pos, precoAtual, motivo) {
         orderId     : resultado.id,
     };
 
-    // Remove posição
     delete posicoes[key];
     db.set('posicoes', posicoes).write();
 
@@ -300,22 +290,20 @@ async function fecharPosicao(key, pos, precoAtual, motivo) {
     const sg    = lucroUSDT >= 0 ? '+' : '';
     log(`${emoji} [${motivo}] ${pos.par} N${pos.nivel} ${sg}$${f(lucroUSDT, 4)} USDT (${sg}R$${f(lucroBRL, 2)})`);
 
-    // ── RECALIBRAÇÃO PÓS-FECHAMENTO ──────────────────────
-    // Se não há mais posições abertas neste par, move a
-    // referência para o preço atual para o próximo ciclo
+    // Recalibra se não tem mais posições
     const restantes = posicoesDoPar(pos.par);
     if (restantes.length === 0) {
         const refs = db.get('referencias').value();
         refs[pos.par] = { preco: precoAtual, ts: now() };
         db.set('referencias', refs).write();
-        log(`📌 [RECALIBRA] ${pos.par} nova ref = ${f(precoAtual, 6)} USDT`);
+        log(`📌 [RECALIBRA PÓS-VENDA] ${pos.par} nova ref = ${f(precoAtual, 6)} USDT`);
     }
 
     return fechado;
 }
 
 // ──────────────────────────────────────────────────────────
-// VERIFICAR FECHAMENTOS (alvo ou stop)
+// VERIFICAR FECHAMENTOS
 // ──────────────────────────────────────────────────────────
 async function verificarFechamentos(par, precoAtual) {
     const posicoes = db.get('posicoes').value();
@@ -360,14 +348,13 @@ function atualizarStats(compras, fechados) {
         }
     }
 
-   // s.updatedAt = ptBR(new Date());
     const agora = new Date();
     const brasilia = new Date(agora.getTime() - (3 * 60 * 60 * 1000));
     s.updatedAt = brasilia.toLocaleString('pt-BR');
     db.set('stats', s).write();
     db.set('perdaHojeUSDT', perdaHoje).write();
 
-    // Histórico de execuções
+    // Histórico
     const todos = [
         ...compras.map(c => ({ ...c, tipo: 'COMPRA', lucroUSDT: 0, lucroBRL: 0 })),
         ...fechados,
@@ -376,7 +363,6 @@ function atualizarStats(compras, fechados) {
         db.get('execucoes').unshift({ ...ex, ts: now() }).write();
     }
 
-    // Mantém só as últimas 500
     const hist = db.get('execucoes').value();
     if (hist.length > 500) db.set('execucoes', hist.slice(0, 500)).write();
 
@@ -420,7 +406,7 @@ async function loop() {
         log('📅 [RESET] Novo dia — perda diária zerada');
     }
 
-    // Stop diário atingido?
+    // Stop diário
     if (db.get('perdaHojeUSDT').value() >= CONFIG.stopDiarioUSDT) {
         log(`⛔ [STOP DIÁRIO] Perda $${f(db.get('perdaHojeUSDT').value(), 2)} >= limite $${CONFIG.stopDiarioUSDT}`);
         return;
@@ -428,7 +414,6 @@ async function loop() {
 
     log(`\n🔍 [SCAN] ${ptBR(new Date())}`);
 
-    // Busca preços
     const precos = await buscarPrecos();
     const par = 'XRP/USDT';
     if (!precos[par]) return;
@@ -448,11 +433,11 @@ async function loop() {
     const diffPct  = ((precoAtual - precoRef) / precoRef) * 100;
     const diffAbs  = Math.abs(diffPct);
 
-    // Recalibração proativa: mercado se afastou muito sem posições abertas
+    // Recalibração só em movimentos grandes (5%)
     if (diffAbs > CONFIG.desvioRecalibraçao && posicoesDoPar(par).length === 0) {
         refs[par] = { preco: precoAtual, ts: now() };
         db.set('referencias', refs).write();
-        log(`📌 [RECALIBRA] Desvio ${diffAbs.toFixed(2)}% > ${CONFIG.desvioRecalibraçao}% sem posições → nova ref ${f(precoAtual, 6)}`);
+        log(`🔄 [RECALIBRA] Desvio ${diffAbs.toFixed(2)}% > ${CONFIG.desvioRecalibraçao}% sem posições → nova ref ${f(precoAtual, 6)}`);
     }
 
     const precoRefAtual = db.get('referencias').value()[par].preco;
@@ -460,7 +445,6 @@ async function loop() {
 
     log(`📊 [GRID] ${par} atual:${f(precoAtual, 6)} ref:${f(precoRefAtual, 6)} diff:${diffPct.toFixed(3)}%`);
 
-    // Exibe os níveis calculados
     log('📐 Níveis:');
     for (const n of niveis) {
         const brlC = (n.precoCompra * CONFIG.cambioExibicao).toFixed(4);
@@ -468,26 +452,28 @@ async function loop() {
         log(`  N${n.nivel} (${n.pctAbaixo}% abaixo): Compra ${f(n.precoCompra, 6)} (R$${brlC}) → Venda ${f(n.precoVenda, 6)} (R$${brlV})`);
     }
 
-    // ── VERIFICAR VENDAS (antes de abrir novas compras) ───
+    // ── VERIFICAR VENDAS ───────────────────────────────────
     const todosFechados = await verificarFechamentos(par, precoAtual);
 
-    // ── COMPRA INICIAL N1 (se não tem nenhuma posição) ────
+    // ── COMPRAS ────────────────────────────────────────────
+    const todasCompras = [];
     const posAbertas = Object.keys(db.get('posicoes').value()).length;
+    
+    // COMPRA INICIAL N1 (se não tem nenhuma posição)
     if (posAbertas === 0) {
-        log(`🎯 [ENTRADA INICIAL] Sem posições — comprando N1 no preço atual`);
+        log(`🎯 [ENTRADA INICIAL] Sem posições — comprando N1 no preço de mercado`);
         const n1 = niveis[0];
         const pos = await abrirOrdem(par, n1.nivel, n1.precoCompra, n1.precoVenda, n1.pctAbaixo, precoAtual);
         if (pos) {
-            await enviarAlertas([pos], []);
+            todasCompras.push(pos);
         }
     }
 
-    // ── VERIFICAR COMPRAS ─────────────────────────────────
-    const todasCompras = [];
+    // COMPRAS NORMAIS (se preço caiu nos níveis)
     for (const n of niveis) {
         if (precoAtual <= n.precoCompra) {
             log(`  📉 Preço ${f(precoAtual, 6)} <= N${n.nivel} (${f(n.precoCompra, 6)}) → abrindo`);
-            const pos = await abrirOrdem(par, n.nivel, n.precoCompra, n.precoVenda, n.pctAbaixo);
+            const pos = await abrirOrdem(par, n.nivel, n.precoCompra, n.precoVenda, n.pctAbaixo, precoAtual);
             if (pos) todasCompras.push(pos);
         }
     }
@@ -499,7 +485,6 @@ async function loop() {
         await enviarAlertas(todasCompras, todosFechados);
     }
 
-    // Resumo no log
     const s   = db.get('stats').value();
     const sld = D(s.lucroUSDT).minus(s.prejuizoUSDT).toNumber();
     const sldBRL = sld * CONFIG.cambioExibicao;
@@ -515,7 +500,7 @@ async function loop() {
 // COMANDOS TELEGRAM
 // ──────────────────────────────────────────────────────────
 bot.onText(/\/start/, msg => tg(msg.chat.id,
-    '🤖 BOT GRID XRP 0,8% — MEXC\n\n' +
+    '🤖 BOT GRID XRP 0.5% — MEXC\n\n' +
     `Capital: ~$${CONFIG.maxExposicaoUSDT} USDT (${CONFIG.numCamadas} x $${CONFIG.valorCamadaUSDT})\n` +
     `Spread compra: ${CONFIG.spreadCompra}% abaixo\n` +
     `Spread venda:  ${CONFIG.spreadVenda}% acima\n` +
@@ -527,7 +512,8 @@ bot.onText(/\/start/, msg => tg(msg.chat.id,
     '/posicoes — posições abertas\n' +
     '/grid — níveis atuais\n' +
     '/execucoes — últimas operações\n' +
-    '/config — configurações'
+    '/config — configurações\n' +
+    '/reset — resetar banco (emergência)'
 ));
 
 bot.onText(/\/status/, msg => {
@@ -580,7 +566,7 @@ bot.onText(/\/grid/, msg => {
     const niveis   = gerarNiveis(precoRef);
     const refBRL   = (precoRef * CONFIG.cambioExibicao).toFixed(4);
 
-    let txt = `📐 GRID ATUAL — XRP 0,8%\n\n`;
+    let txt = `📐 GRID ATUAL — XRP 0.5%\n\n`;
     txt += `Referência: ${f(precoRef, 6)} USDT (R$${refBRL})\n`;
     txt += `Atualizada: ${ptBR(refs['XRP/USDT'].ts)}\n\n`;
 
@@ -625,6 +611,28 @@ bot.onText(/\/config/, msg => tg(msg.chat.id,
 ));
 
 // ──────────────────────────────────────────────────────────
+// COMANDO RESET (EMERGÊNCIA)
+// ──────────────────────────────────────────────────────────
+bot.onText(/\/reset/, msg => {
+    if (msg.chat.id.toString() !== CONFIG.chatId) {
+        return tg(msg.chat.id, '❌ Acesso negado');
+    }
+    
+    // Reseta o banco
+    db.set('posicoes', {}).write();
+    db.set('execucoes', []).write();
+    db.set('stats', {
+        compras: 0, vendas: 0,
+        lucroUSDT: 0, prejuizoUSDT: 0,
+        ciclos: 0, updatedAt: null,
+    }).write();
+    db.set('perdaHojeUSDT', 0).write();
+    
+    log('🔄 [RESET] Banco de dados resetado via comando');
+    tg(msg.chat.id, '✅ Banco resetado! Posições fantasma removidas.\n\nO bot vai recomeçar no próximo scan.');
+});
+
+// ──────────────────────────────────────────────────────────
 // SERVIDOR HTTP PARA RENDER (KEEP-ALIVE)
 // ──────────────────────────────────────────────────────────
 const express = require('express');
@@ -643,7 +651,7 @@ serverApp.listen(SERVER_PORT, () => {
 // START
 // ──────────────────────────────────────────────────────────
 log('='.repeat(70));
-log('  BOT GRID XRP 0,8% — MEXC SPOT');
+log('  BOT GRID XRP 0.5% — MEXC SPOT');
 log(`  Capital: $${CONFIG.maxExposicaoUSDT} USDT | ${CONFIG.numCamadas} níveis de $${CONFIG.valorCamadaUSDT}`);
 log(`  Spread: ${CONFIG.spreadCompra}% compra | ${CONFIG.spreadVenda}% venda`);
 log(`  Stop: ${CONFIG.stopPorPosicao}%/posição | $${CONFIG.stopDiarioUSDT} USDT/dia`);
@@ -664,7 +672,7 @@ log('='.repeat(70));
             `🛑 Stop:   ${CONFIG.stopPorPosicao}% | $${CONFIG.stopDiarioUSDT}/dia\n` +
             `🔄 Recalibra: >${CONFIG.desvioRecalibraçao}% sem posição\n\n` +
             `✅ Modo ${CONFIG.MODO_SIMULADO ? 'SIMULADO' : 'REAL'} ativo\n` +
-            `📱 /status /posicoes /grid /execucoes`
+            `📱 /status /posicoes /grid /execucoes /reset`
         );
 
         log('✅ Bot iniciado com sucesso!');
