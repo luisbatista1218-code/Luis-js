@@ -344,14 +344,25 @@ async function fecharPosicao(key, pos, precoAtual, motivo) {
     const sg    = lucroUSDT >= 0 ? '+' : '';
     log(`${emoji} [${motivo}] ${pos.par} N${pos.nivel} ${sg}$${f(lucroUSDT, 4)} USDT (${sg}R$${f(lucroBRL, 2)}) | ORDER: ${resultado.id}`);
 
-    const restantes = posicoesDoPar(pos.par);
+   /* const restantes = posicoesDoPar(pos.par);
     if (restantes.length === 0) {
         const refs = db.get('referencias').value();
         refs[pos.par] = { preco: precoAtual, ts: now() };
         db.set('referencias', refs).write();
         log(`📌 [RECALIBRA] ${pos.par} nova ref = ${f(precoAtual, 6)} USDT`);
+    }*/
+    // Recalibra se não tem mais posições
+    const restantes = posicoesDoPar(pos.par);
+    if (restantes.length === 0) {
+    // BUSCA PREÇO DE MERCADO REAL
+    const precosAtuais = await buscarPrecos();
+    const precoMercado = precosAtuais[pos.par]?.preco || precoAtual;
+    
+    const refs = db.get('referencias').value();
+    refs[pos.par] = { preco: precoMercado, ts: now() };
+    db.set('referencias', refs).write();
+    log(`📌 [RECALIBRA] ${pos.par} nova ref = ${f(precoMercado, 6)} USDT (mercado)`);
     }
-
     return fechado;
 }
 
