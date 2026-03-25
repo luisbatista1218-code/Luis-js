@@ -112,7 +112,7 @@ async function initMexc() {
         log(`[MEXC] Conectado! USDT livre: ${balance.USDT?.free || 0}`);
         
         // VERIFICA SE TEM XRP NA CORRETORA
-        const xrpBalance = balance.XRP?.free || 0;
+      /*  const xrpBalance = balance.XRP?.free || 0;
         if (xrpBalance > 0) {
             log(`[MEXC] ATENÇÃO! Você tem ${xrpBalance} XRP na corretora que não estão registrados no bot!`);
             
@@ -141,7 +141,7 @@ async function initMexc() {
                 log(`📦 [SINCRONIZADO] XRP existente: ${xrpBalance} XRP @ $${precoAtual} = $${valorUSDT.toFixed(2)} USDT`);
                 log(`🎯 Agora o bot vai vender este XRP quando atingir o alvo!`);
             }
-        }
+        }*/
         
         return true;
     } catch (err) {
